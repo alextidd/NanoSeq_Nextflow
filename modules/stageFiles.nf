@@ -22,8 +22,7 @@ nextflow.enable.dsl=2
 */
 // *MODIFIED* (ao7): '-noconvert_cram_to_bam' replaced by '-t uc' in newer dataImportExport versions
 //TYPE = "-t u"; EXT=".cram";EXTI=".cram.crai";ODIR="raw_lane_bams"
-TYPE = "-t uc"; EXT=".cram";EXTI=".cram.crai";ODIR="raw_lane_bams"
-//
+//TYPE = "-t uc"; EXT=".cram";EXTI=".cram.crai";ODIR="raw_lane_bams"
 //TYPE = "-t m"; EXT=".bam";ODIR="mapped_sample"
 //TYPE = "-t jsc";EXT=".bed.gz";ODIR="jlSCounts"
 //TYPE = "-t gps";EXT=".bam";ODIR="GRIDSS"
@@ -32,7 +31,7 @@ TYPE = "-t uc"; EXT=".cram";EXTI=".cram.crai";ODIR="raw_lane_bams"
 //TYPE = "-t tb";EXT=".bam";ODIR="telbam"
 //TYPE = "-t su";EXT=".vcf.gz";ODIR="cavemanC"
 
-//check to see if we have enough space to get all the files
+// check to see if we have enough space to get all the files
 process CHECK_SIZE {
 
     input :
@@ -46,11 +45,7 @@ process CHECK_SIZE {
     errorStrategy 'terminate'
     executor = 'local'
 
-    // *MODIFIED* (ao7): change to match farm22 module name
-    //beforeScript 'module purge; module add dataImportExport'
-    //beforeScript 'module purge; module add dataImportExport/1.56.0'
     beforeScript 'module purge; module add dataImportExport/1.60.4'
-    //
 
     script:
         def opts1 = task.ext.args ?: '-noconvert_cram_to_bam'
@@ -60,9 +55,15 @@ process CHECK_SIZE {
         NS1=`wc -l $sample_file | sed 's/ .*\$//'`
 
         ## *MODIFIED* (ao7): '-noconvert_cram_to_bam' ($opts1) replaced by '-t uc' in newer dataImportExport versions
-        ##exportData.pl -n -f -st -l live $opts1 -s $sample_file -o $dest_out $opts2 $TYPE | grep -v bsub | tee log.txt
-        exportData.pl -n -f -st -l live -s $sample_file -o $dest_out $opts2 $TYPE | grep -v bsub | tee log.txt
-        ##
+        exportData.pl \\
+          -n \\
+          -f \\
+          -st \\
+          -l live \\
+          -s $sample_file \\
+          -o $dest_out \\
+          $opts2 \\
+          $TYPE | grep -v bsub | tee log.txt
 
         NS2=`grep 'bam file sizes' log.txt | wc -l`
 
@@ -86,11 +87,12 @@ process DOWNLOAD {
     input :
         val dest_out
         tuple val(meta), val(sample)
+        val ext
     
-    publishDir "$dest_out/${meta.containsKey("study") ? meta.study : meta.project}/$sample/$ODIR", mode: 'link', pattern : "*$EXT", overwrite: true
+    publishDir "$dest_out/${meta.containsKey("study") ? meta.study : meta.project}/$sample/${params.bams_publish_subdir}", mode: 'link', pattern : "*.{${ext.file},${ext.index}}", overwrite: true
 
     output :
-        tuple val(meta), path("*$EXT"), emit: files
+        tuple val(meta), path("*.${ext.file}"), emit: files
         path ("versions.yml"), emit: versions
 
     cpus 1
@@ -100,29 +102,28 @@ process DOWNLOAD {
     errorStrategy { sleep(Math.pow(2, task.attempt) * 1000 as long); return 'retry' } //delayed retry
     maxRetries 5
 
-
-    // *MODIFIED* (ao7): change to match farm22 module name
-    //beforeScript 'module purge; module add dataImportExport'
-    //beforeScript 'module purge; module add dataImportExport/1.56.0'
     beforeScript 'module purge; module add dataImportExport/1.60.4'
-    //
 
     script :
         def study = meta.containsKey("study") ? meta.study : meta.project
         def opts1 = task.ext.args ?: '-noconvert_cram_to_bam'
-        def opts2 = meta.containsKey("study") ? "-study $meta.study" : ''
-        def opts3 = meta.containsKey("project") ? "-project $meta.project" : ''
+        def opts2 = meta.containsKey("study") ? "--study $meta.study" : ''
+        def opts3 = meta.containsKey("project") ? "--project $meta.project" : ''
         """
         touch ${task.process}_$sample
 
-        ## *MODIFIED* (ao7): '-noconvert_cram_to_bam' ($opts1) replaced by '-t uc' in newer dataImportExport versions
-        ##exportData.pl -n -st -l live $opts1 -s $sample -o $dest_out $opts2 $opts3 $TYPE
-        exportData.pl -n -st -l live -s $sample -o $dest_out $opts2 $opts3 $TYPE
-        ##
-        mv $dest_out/$study/$sample/*/*$EXT .
-        #mv $dest_out/${study}/$sample/*/*$EXTI .
+        exportData.pl \\
+          --noarch \\
+          --staging \\
+          --live live \\
+          --sample $sample \\
+          --output . \\
+          --types ${ext.types} \\
+          $opts2 \\
+          $opts3
+        mv $study/$sample/*/*.${ext.file} .
 
-        set +u #otherwise perl print causes error
+        set +u # otherwise perl print causes error
         cat <<-END_VERSIONS > versions.yml
         "${task.process}":
             dataImportExport: \$echo \$(perl -MSanger::CGP::DataImportExport::Export::ExportData  -e 'print \$Sanger::CGP::DataImportExport::Export::ExportData::VERSION;')
@@ -132,7 +133,7 @@ process DOWNLOAD {
     stub:
         """
         sleep \$[ ( \$RANDOM % 20 )  + 1 ]s
-        touch ${sample}$EXT
+        touch ${sample}.${ext.file}
 
         set +u #otherwise perl print causes error
         cat <<-END_VERSIONS > versions.yml
@@ -150,11 +151,12 @@ process MERGE {
         val dest_out
         tuple val(meta), path(files)
         val min_mapQ
+        val ext
     
     //publishDir "${dest_out}", mode: 'link', pattern: "merged/*", overwrite: true
 
     output :
-        tuple val(meta),path("merged/${meta.id}$EXT"), path("merged/${meta.id}${EXTI}"), emit: file
+        tuple val(meta), path("merged/${meta.id}.${ext.file}"), path("merged/${meta.id}.${ext.index}"), emit: file
         path ("versions.yml"), emit: versions
 
     cpus 3
@@ -173,9 +175,9 @@ process MERGE {
         touch ${task.process}_${meta.id}
         mkdir -p merged
         samtools merge -@ $task.cpus -u - $files | \
-            samtools view -@ $task.cpus -q $min_mapQ -C -o merged/${meta.id}$EXT
+            samtools view -@ $task.cpus -q $min_mapQ -C -o merged/${meta.id}.${ext.file}
         
-        samtools index -@ $task.cpus merged/${meta.id}$EXT
+        samtools index -@ $task.cpus merged/${meta.id}.${ext.file}
 
         cat <<-END_VERSIONS > versions.yml
         "${task.process}":
@@ -187,8 +189,8 @@ process MERGE {
         """
         touch MERGE
         mkdir -p merged
-        touch merged/${meta.id}${EXT}
-        touch merged/${meta.id}${EXTI}
+        touch merged/${meta.id}.${ext.file}
+        touch merged/${meta.id}.${ext.index}
 
         cat <<-END_VERSIONS > versions.yml
         "${task.process}":

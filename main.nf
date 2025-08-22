@@ -149,8 +149,11 @@ For more information, see the pipeline documentation.
 
     // checking parameters
 
-    // location (local or irods)
+    // input / output
     assert ( params.location == "local" || params.location == "irods" ) : "\nlocation parameter must be 'local' or 'irods'\n"
+    assert ( params.ext == "cram" || params.ext == "bam" ) : "\next parameter must be 'cram' or 'bam'\n"
+    // create named map with ext.file and ext.index, with cram and cram.crai if cram, bam and bam.bai if bam
+    ext = params.ext == "cram" ? [file: "cram", index: "cram.crai", types: "uc"] : [file: "bam", index: "bam.bai", types: "m"]
 
     // remapping CRAMs
     assert ( params.remap == true || params.remap == false ) : "\nrealign parameter must be true or false\n"
@@ -182,7 +185,7 @@ For more information, see the pipeline documentation.
     }
 
     // part parameters
-    file_exists( params.part_excludeBED, "part_excludeBED" )
+    file_exists(params.part_excludeBED, "part_excludeBED")
     file_exists(params.post_triNuc,"post_triNuc")
 
     // varify bam id params
@@ -199,7 +202,7 @@ For more information, see the pipeline documentation.
     studies = []
 
     iline = 0
-    new File(params.sample_sheet).splitEachLine(",") {fields -> 
+    new File(params.sample_sheet).splitEachLine(",") { fields -> 
         if ( iline == 0 ) {
             assert ( fields.contains("id")) : "\n Must specify a unique id column in the sample sheet\n"
             assert ( fields.contains("duplex")) : "\n Must specify a duplex column in the sample sheet\n"
@@ -210,37 +213,39 @@ For more information, see the pipeline documentation.
             iline = 1
         } else {
             row_id = fields[i_id]
-            // *MODIFIED* (ao7): skip commented lines (#)
+            row_duplex_id = row_id
+            row_normal_id = row_id
+
             if ( ! row_id.startsWith('#') ) {
-            //
                 assert ( ! list_ids.contains(row_id) ) : "\nids in sample sheet must be unique\n\n"
                 row_duplex = fields[i_duplex]
                 row_normal = fields[i_normal]
                 if ( row_duplex.contains(':') ) {
                     study_duplex = row_duplex.split(':')[0]
-                    row_duplex = row_duplex.split(':')[1]
+                    row_duplex_id = row_duplex.split(':')[1]
                 } else {
-                    assert ( params.study != "" | params.location == "local" ) : "\nMust define a study as an argument\n"
+                    assert ( params.study != "") : "\nMust define a study as an argument\n"
                     study_duplex = params.study
-                } 
+                }
                 if ( row_normal.contains(':') ) {
                     study_normal = row_normal.split(':')[0]
-                    row_normal = row_normal.split(':')[1]
+                    row_normal_id = row_normal.split(':')[1]
                 } else {
                     assert ( params.study != "" ) : "\nMust define a study as an argument\n"
                     study_normal = params.study
-                } 
+                }
                 list_ids.add(row_id)
                 tag_duplex = [ id: row_id, type : "duplex", name: row_duplex ]
                 tag_normal = [ id: row_id, type : "normal", name: row_normal ]
-                sample_tags_a.add([row_duplex, tag_duplex ])
-                sample_tags_a.add([row_normal, tag_normal ])
-                samples.add( [ [study:study_duplex, id:row_duplex], row_duplex] )
-                samples.add( [ [study:study_normal, id:row_normal], row_normal] )
+                sample_tags_a.add([row_duplex, tag_duplex])
+                sample_tags_a.add([row_normal, tag_normal])
+                samples.add( [ [ study:study_duplex, id:row_duplex_id ], row_duplex] )
+                samples.add( [ [ study:study_normal, id:row_normal_id ], row_normal] )
             }
         }
     }
     ch_samples = Channel.from(samples.unique())
+    ch_samples.view()
 
     pout = params.toSorted{a,b -> a.key <=> b.key} // for ordered print
     if ( params.remap) {
@@ -254,27 +259,29 @@ For more information, see the pipeline documentation.
     println(ss.text)
     println("\n")
 
-    //create sample files use the study name as the file name
+    // create sample files use the study name as the file name
     sam_file = ch_samples.map{ [it[0].study, it[1]] }.groupTuple().collectFile(cache: 'lenient', newLine: true) { 
         item ->[ "${item[0]}", item[1].join('\n') ]
     }
-    // *MODIFIED* (ao7): TEMPORARY - DISABLE CHECK_SIZE to avoid failure on farm22 
-    //CHECK_SIZE( irods_data.getAbsolutePath(), sam_file, 1 )
-    // [line below was already commented out]
-    //
-    //CHECK_SIZE.out.view()
+    
     if (params.location == "irods") {
 
+      // *MODIFIED* (ao7): TEMPORARY - DISABLE CHECK_SIZE to avoid failure on farm22 
+      // CHECK_SIZE( irods_data.getAbsolutePath(), sam_file, 1 )
+
       // download data from irods
-      DOWNLOAD(params.outDir + "/irods_data", ch_samples )
+      DOWNLOAD(params.outDir + "/irods_data", ch_samples, ext)
       versions = versions.concat(DOWNLOAD.out.versions.first())
       out_files = DOWNLOAD.out.files
 
     } else {
       
+      // use local paths
+      out_files = ch_samples
+      
     }
 
-    MERGE( params.outDir, DOWNLOAD.out.files, params.remap ? 0 : params.min_mapQ )
+    MERGE( params.outDir, out_files, params.remap ? 0 : params.min_mapQ, ext)
     versions = versions.concat(MERGE.out.versions.first())
 
     // *MODIFIED* (ao7): Commented out in order to place SEQ_FILTER after BWAMEM2_REMAP
