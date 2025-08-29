@@ -6,30 +6,30 @@ nextflow.enable.dsl=2
 // Pipeline parameters are hard-coded below                            //
 //---------------------------------------------------------------------//
 
-//---------------------------------------------------------------------//
-
+// functions
 def file_exists(x, name ) {
     if ( x == "" ) { return }
     assert file(x).exists() : "\n$name file $x was not found!\n\n"
 }
 
-include { CHECK_SIZE; DOWNLOAD; MERGE; SEQ_FILTER } from './modules/stageFiles.nf'
+// modules
+include { CHECK_SIZE; DOWNLOAD; MERGE; LOCAL; SEQ_FILTER } from './modules/stageFiles.nf'
 include { NANOSEQ } from './modules/NanoSeq_analysis.nf'
 include { BWAMEM2_MAP; BWAMEM2_REMAP } from './modules/bwa.nf'
 include { ADD_NANOSEQ_FASTQ_TAGS; MARKDUP; NANOSEQ_ADD_RB; NANOSEQ_DEDUP;
          VERIFY_BAMID; NANOSEQ_EFFI; NANOSEQ_VAF; FINALIZE; CLEANUP } from './modules/NanoSeq_aux.nf'
 
-versions = Channel.empty() //accumulate all version files here
-
-
 workflow {
+
+  // accumulate all version files here
+  versions = Channel.empty()
 
   // Help message
   if (params.help) {
     println """
 ╔══════════════════════════════════════════════════════════════════════════════════════════════╗
 ║                              NANOSEQ NEXTFLOW PIPELINE - HELP                                ║
-║                          Author: Raul Alcantara (ra11), A Baez-Ortega (ao7)                  ║
+║                      Authors: Raul Alcantara (ra11), A Baez-Ortega (ao7)                     ║
 ╚══════════════════════════════════════════════════════════════════════════════════════════════╝
 
 DESCRIPTION:
@@ -51,8 +51,8 @@ OPTIONAL INPUT FILES:
     --part_excludeBED <file>    BED file with regions to exclude from partitioning
 
 REFERENCE GENOME OPTIONS:
-    --grch37                    Use predefined GRCh37 reference and annotations [false]
-    --grch38                    Use predefined GRCh38 reference and annotations [false]
+    -profile grch37             Use predefined GRCh37 reference and annotations [false]
+    -profile grch38             Use predefined GRCh38 reference and annotations [false]
 
 EXECUTION MODES:
     --short                     Short-run mode: only import, preprocessing & efficiency [false]
@@ -134,7 +134,7 @@ EXAMPLES:
     nextflow run main.nf --sample_sheet samples.csv --ref /path/to/genome.fa --post_triNuc trinuc.txt
     
     # Run with GRCh38 reference
-    nextflow run main.nf --grch38 --sample_sheet samples.csv --post_triNuc trinuc.txt
+    nextflow run main.nf -profile grch38 --sample_sheet samples.csv --post_triNuc trinuc.txt
     
     # Short run (preprocessing only)
     nextflow run main.nf --short --sample_sheet samples.csv --ref /path/to/genome.fa --post_triNuc trinuc.txt
@@ -153,7 +153,7 @@ For more information, see the pipeline documentation.
     assert ( params.location == "local" || params.location == "irods" ) : "\nlocation parameter must be 'local' or 'irods'\n"
     assert ( params.ext == "cram" || params.ext == "bam" ) : "\next parameter must be 'cram' or 'bam'\n"
     // create named map with ext.file and ext.index, with cram and cram.crai if cram, bam and bam.bai if bam
-    ext = params.ext == "cram" ? [file: "cram", index: "cram.crai", types: "uc"] : [file: "bam", index: "bam.bai", types: "m"]
+    ext = params.ext == "cram" ? [file: "cram", index: "crai", types: "uc"] : [file: "bam", index: "bai", types: "m"]
 
     // remapping CRAMs
     assert ( params.remap == true || params.remap == false ) : "\nrealign parameter must be true or false\n"
@@ -199,7 +199,6 @@ For more information, see the pipeline documentation.
     list_ids = []
     samples = []
     sample_tags_a = []
-    studies = []
 
     iline = 0
     new File(params.sample_sheet).splitEachLine(",") { fields -> 
@@ -224,14 +223,14 @@ For more information, see the pipeline documentation.
                     study_duplex = row_duplex.split(':')[0]
                     row_duplex_id = row_duplex.split(':')[1]
                 } else {
-                    assert ( params.study != "") : "\nMust define a study as an argument\n"
+                    // assert ( params.study != "") : "\nMust define a study as an argument\n"
                     study_duplex = params.study
                 }
                 if ( row_normal.contains(':') ) {
                     study_normal = row_normal.split(':')[0]
                     row_normal_id = row_normal.split(':')[1]
                 } else {
-                    assert ( params.study != "" ) : "\nMust define a study as an argument\n"
+                    // assert ( params.study != "" ) : "\nMust define a study as an argument\n"
                     study_normal = params.study
                 }
                 list_ids.add(row_id)
@@ -258,39 +257,39 @@ For more information, see the pipeline documentation.
     ss = file( params.sample_sheet )
     println(ss.text)
     println("\n")
-
-    // create sample files use the study name as the file name
-    sam_file = ch_samples.map{ [it[0].study, it[1]] }.groupTuple().collectFile(cache: 'lenient', newLine: true) { 
-        item ->[ "${item[0]}", item[1].join('\n') ]
-    }
     
     if (params.location == "irods") {
 
       // *MODIFIED* (ao7): TEMPORARY - DISABLE CHECK_SIZE to avoid failure on farm22 
+      // create sample files use the study name as the file name
+      // sam_file = ch_samples.map{ [it[0].study, it[1]] }.groupTuple().collectFile(cache: 'lenient', newLine: true) { 
+      //     item ->[ "${item[0]}", item[1].join('\n') ]
+      // }
       // CHECK_SIZE( irods_data.getAbsolutePath(), sam_file, 1 )
 
       // download data from irods
       DOWNLOAD(params.outDir + "/irods_data", ch_samples, ext)
       versions = versions.concat(DOWNLOAD.out.versions.first())
-      out_files = DOWNLOAD.out.files
+      MERGE( params.outDir, DOWNLOAD.out.files, params.remap ? 0 : params.min_mapQ, ext)
+      out_files = MERGE.out.files
+      versions = versions.concat(MERGE.out.versions.first())
 
     } else {
       
       // use local paths
-      out_files = ch_samples
+      LOCAL(ch_samples, ext)
+      out_files = LOCAL.out.files
       
     }
 
-    MERGE( params.outDir, out_files, params.remap ? 0 : params.min_mapQ, ext)
-    versions = versions.concat(MERGE.out.versions.first())
-
     // *MODIFIED* (ao7): Commented out in order to place SEQ_FILTER after BWAMEM2_REMAP
     //Add metadata to samples
-    //ch_cram_ss = MERGE.out.file.map{ [ [ name: it[0].id ], it[1], it[2] ] }
+    //ch_cram_ss = MERGE.out.files.map{ [ [ name: it[0].id ], it[1], it[2] ] }
 
-    if ( params.remap ) { //remapping
+    // remapping
+    if ( params.remap ) { 
 
-        MAP = BWAMEM2_REMAP( MERGE.out.file.map{ [ [ name: it[0].id ], it[1], it[2] ] }, reference_path, params.min_mapQ )
+        MAP = BWAMEM2_REMAP( out_files.map{ [ [ name: it[0].id ], it[1], it[2] ] }, reference_path, params.min_mapQ )
 
         MARKDUP( MAP.cram, reference_path )
 
@@ -302,7 +301,7 @@ For more information, see the pipeline documentation.
     } else {
 
         // *MODIFIED* (ao7): Moved line 309 to else clause
-        ch_cram_ss = MERGE.out.file.map{ [ [ name: it[0].id ], it[1], it[2] ] }
+        ch_cram_ss = out_files.map{ [ [ name: it[0].id ], it[1], it[2] ] }
         //
         
     }

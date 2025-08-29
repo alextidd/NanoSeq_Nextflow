@@ -156,7 +156,9 @@ process MERGE {
     //publishDir "${dest_out}", mode: 'link', pattern: "merged/*", overwrite: true
 
     output :
-        tuple val(meta), path("merged/${meta.id}.${ext.file}"), path("merged/${meta.id}.${ext.index}"), emit: file
+        tuple val(meta),
+              path("merged/${meta.id}.${ext.file}"),
+              path("merged/${meta.id}.${ext.file}.${ext.index}"), emit: files
         path ("versions.yml"), emit: versions
 
     cpus 3
@@ -190,13 +192,61 @@ process MERGE {
         touch MERGE
         mkdir -p merged
         touch merged/${meta.id}.${ext.file}
-        touch merged/${meta.id}.${ext.index}
+        touch merged/${meta.id}.${ext.file}.${ext.index}
 
         cat <<-END_VERSIONS > versions.yml
         "${task.process}":
             samtools: \$(echo \$(samtools --version 2>&1) | head -1 | sed 's/^.*samtools //; s/Using.*\$//')
         END_VERSIONS
         """
+}
+
+process LOCAL {
+
+  tag "$meta.id"
+
+  input :
+      tuple val(meta), val(sample)
+      val ext
+  
+  output :
+        tuple val(meta),
+              path("${meta.id}.${ext.file}"),
+              path("${meta.id}.${ext.file}.${ext.index}"), emit: files
+
+  memory {  task.exitStatus == 130  ? 2.GB * task.attempt : 2.GB }
+
+  maxRetries 3
+
+  script:
+      """
+      set -o pipefail
+      
+      ln -s ${sample} ${meta.id}.${ext.file}
+
+      if [ -f "${sample}.${ext.index}" ] ; then
+        ln -s ${sample}.${ext.index} ${meta.id}.${ext.file}.${ext.index}
+        touch versions.yml
+      else
+        samtools index -@ $task.cpus ${meta.id}.${ext.file}
+      cat <<-END_VERSIONS > versions.yml
+      "${task.process}":
+          samtools: \$(echo \$(samtools --version 2>&1) | head -1 | sed 's/^.*samtools //; s/Using.*\$//')
+      END_VERSIONS
+      fi
+      """
+
+  stub:
+      """
+      touch ${meta.id}.${ext.file}
+      touch ${meta.id}.${ext.file}.${ext.index}
+
+      cat <<-END_VERSIONS > versions.yml
+      "${task.process}":
+          samtools: \$(echo \$(samtools --version 2>&1) | head -1 | sed 's/^.*samtools //; s/Using.*\$//')
+      END_VERSIONS
+      """
+
 }
 
 // *MODIFIED* (ao7): Added process SEQ_FILTER
