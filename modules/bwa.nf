@@ -159,7 +159,7 @@ process REMAP_SPLIT {
         """
 }
 
-process REAMAP_BWAMEM2 {
+process REMAP_BWAMEM2 {
 
     tag "$meta.name"
 
@@ -233,9 +233,9 @@ workflow BWAMEM2_REMAP {
 
     main :
         REMAP_SPLIT(cram_in, index_dir)
-        REAMAP_BWAMEM2(REMAP_SPLIT.out.split_out, index_dir, min_mapQ)
+        REMAP_BWAMEM2(REMAP_SPLIT.out.split_out, index_dir, min_mapQ)
 
     emit :
-        versions = REAMAP_BWAMEM2.out.versions
-        cram = REAMAP_BWAMEM2.out.cram
+        versions = REMAP_BWAMEM2.out.versions
+        cram = REMAP_BWAMEM2.out.cram
 }
