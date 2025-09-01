@@ -236,15 +236,14 @@ For more information, see the pipeline documentation.
                 list_ids.add(row_id)
                 tag_duplex = [ id: row_id, type : "duplex", name: row_duplex ]
                 tag_normal = [ id: row_id, type : "normal", name: row_normal ]
-                sample_tags_a.add([row_duplex, tag_duplex])
-                sample_tags_a.add([row_normal, tag_normal])
+                sample_tags_a.add([row_duplex_id, tag_duplex])
+                sample_tags_a.add([row_normal_id, tag_normal])
                 samples.add( [ [ study:study_duplex, id:row_duplex_id ], row_duplex] )
                 samples.add( [ [ study:study_normal, id:row_normal_id ], row_normal] )
             }
         }
     }
     ch_samples = Channel.from(samples.unique())
-    ch_samples.view()
 
     pout = params.toSorted{a,b -> a.key <=> b.key} // for ordered print
     if ( params.remap) {
@@ -320,7 +319,7 @@ For more information, see the pipeline documentation.
     //* add labels for the pair analysis. This handles paired data using the same sample as duplex and normal
     ch_tag_n_add_rb = 
         NANOSEQ_ADD_RB.out.cram.map{[it[0].name,it[1],it[2]]}.cross(ch_tags).map{[it[1][1],it[0][1],it[0][2]]}
-
+    
     NANOSEQ_DEDUP( NANOSEQ_ADD_RB.out.cram, reference_path, params.nanoseq_dedup_m )
 
     versions = versions.concat(NANOSEQ_DEDUP.out.versions.first())
@@ -332,6 +331,9 @@ For more information, see the pipeline documentation.
     }
     
     //* add labels for the pair analysis. This handles paired data using the same sample as duplex and normal
+    NANOSEQ_DEDUP.out.cram.map{[it[0].name,it[1],it[2]]}.view()
+    ch_tags.view()
+
     ch_tag_n_dedup = 
         NANOSEQ_DEDUP.out.cram.map{[it[0].name,it[1],it[2]]}.cross(ch_tags).map{[it[1][1],it[0][1],it[0][2]]}
 
