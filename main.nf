@@ -163,6 +163,7 @@ For more information, see the pipeline documentation.
     assert ( params.ref.split("/")[-1] == "genome.fa" ) : "\nreference file must be named genome.fa\n"
     file_exists(params.ref, "ref")
     reference_path = params.ref.split("/")[0..-2].join('/')
+    file_exists(reference_path + "/genome.fa.fai", "fasta index")
     if ( params.remap ) {
         file_exists(reference_path + "/genome.fa.bwt.2bit.64", "bwa-mem2 index ")
         file_exists(reference_path + "/genome.fa.dict", "samtools dict ")
@@ -331,9 +332,6 @@ For more information, see the pipeline documentation.
     }
     
     //* add labels for the pair analysis. This handles paired data using the same sample as duplex and normal
-    NANOSEQ_DEDUP.out.cram.map{[it[0].name,it[1],it[2]]}.view()
-    ch_tags.view()
-
     ch_tag_n_dedup = 
         NANOSEQ_DEDUP.out.cram.map{[it[0].name,it[1],it[2]]}.cross(ch_tags).map{[it[1][1],it[0][1],it[0][2]]}
 
